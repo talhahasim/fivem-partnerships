@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fivem-partnerships",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-03-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  },
+  // Delivery'leri kuyruğa basan PRODUCER binding (server action'lar env.DELIVERY_QUEUE.send()).
+  "queues": {
+    "producers": [
+      {
+        "binding": "DELIVERY_QUEUE",
+        "queue": "delivery-queue"
+      }
+    ]
+  }
+  // NEXT_PUBLIC_* ve gizli anahtarlar `wrangler secret` / dashboard üzerinden verilir.
+}

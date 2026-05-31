@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+/* =========================================================================
+   Tasarım sistemi — Discord tarzı mat (flat) karanlık tema
+   ========================================================================= */
+:root {
+  color-scheme: dark;
+
+  /* Yüzeyler — opak mat gri */
+  --background: #1e1f22; /* sayfa zemini */
+  --sidebar: #18191c; /* kenar çubuğu (daha koyu) */
+  --card: #26282c; /* kartlar */
+  --card-2: #2e3035; /* hover / yükseltilmiş */
+  --input: #161719; /* input (içe gömülü, daha koyu) */
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.11);
+
+  /* Metin */
+  --foreground: #f2f3f5;
+  --muted: #b5bac1;
+  --faint: #80848e;
+
+  /* Aksanlar (Discord paleti) */
+  --primary: #5865f2; /* blurple */
+  --primary-2: #8b94f7;
+  --primary-hover: #4752c4;
+  --primary-foreground: #ffffff;
+  --accent: #3ba55c; /* yeşil — aktif/canlı */
+  --accent-foreground: #ffffff;
+  --danger: #da373c;
+  --warning: #f0b232;
+  --success: #23a55a;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-sidebar: var(--sidebar);
+  --color-card: var(--card);
+  --color-card-2: var(--card-2);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-primary: var(--primary);
+  --color-primary-2: var(--primary-2);
+  --color-primary-hover: var(--primary-hover);
+  --color-accent: var(--accent);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+
+  --font-display: var(--font-display), ui-sans-serif, system-ui;
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1rem;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Tıklanabilir öğeler her zaman pointer (Tailwind v4 reset bunu kaldırıyor) */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+label:has(> input[type="checkbox"]),
+summary {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+}
+
+/* Seçim + scrollbar */
+::selection {
+  background: rgba(88, 101, 242, 0.4);
+  color: #fff;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+  background-clip: padding-box;
+}
+
+/* =========================================================================
+   Bileşen yardımcı sınıfları — mat, opak
+   ========================================================================= */
+@layer components {
+  /* Kart: opak mat gri (glass yok) */
+  .glass {
+    background: var(--card);
+    border: 1px solid var(--border);
+  }
+  .glass-hover {
+    transition: background-color 0.15s, border-color 0.15s;
+  }
+  .glass-hover:hover {
+    background: var(--card-2);
+    border-color: var(--border-strong);
+  }
+  .text-gradient {
+    background: linear-gradient(100deg, #fff 30%, var(--primary-2) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-rise { animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.animate-pulse-dot { animation: pulse-dot 1.8s ease-in-out infinite; }
+
+@keyframes pop {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-pop { animation: pop 0.13s cubic-bezier(0.22, 1, 0.36, 1); transform-origin: top; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise, .animate-pulse-dot, .animate-pop { animation: none; }
+}

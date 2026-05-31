@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fivem-partnerships-delivery-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-03-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // Kuyruktan delivery mesajlarını tüketir.
+  "queues": {
+    "consumers": [
+      {
+        "queue": "delivery-queue",
+        "max_batch_size": 10,
+        "max_retries": 5,
+        "dead_letter_queue": "delivery-dlq"
+      }
+    ],
+    // Onaylanınca tekrar enqueue için producer da bağlı.
+    "producers": [{ "binding": "DELIVERY_QUEUE", "queue": "delivery-queue" }]
+  },
+  // 1 dakikada bir sweeper: takılan/onaylanan delivery'leri kuyruğa basar.
+  "triggers": {
+    "crons": ["* * * * *"]
+  }
+  // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, WEBHOOK_ENC_KEY  (wrangler secret put)
+}
