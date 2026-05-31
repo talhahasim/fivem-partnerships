@@ -3,6 +3,8 @@ import type { DiscordMessage } from "@/lib/embed/schema";
 import type { DeliverySource } from "@/lib/types/db";
 import { enqueueDelivery } from "@/lib/queue";
 import { notifyPendingDelivery } from "@/lib/notify";
+import { decryptSecret } from "@/lib/crypto";
+import { sendWebhookMessage } from "@/lib/discord";
 
 export type DispatchParams = {
   senderStoreId: string;
@@ -58,7 +60,16 @@ export async function dispatchDelivery(admin: SupabaseClient, p: DispatchParams)
   if (error || !delivery) return null;
 
   if (status === "approved") {
-    await enqueueDelivery(delivery.id);
+    if (shouldDeliverInline()) {
+      // Test/dev: queue'ya HİÇ gitme, worker'ı bekleme → doğrudan gönder.
+      // (next dev'de OpenNext queue binding'i var ama tüketen worker yok;
+      //  enqueue 'başarılı' görünüp delivery sonsuza dek 'approved' kalırdı.)
+      await deliverInline(admin, delivery.id);
+    } else {
+      const queued = await enqueueDelivery(delivery.id);
+      // Güvenlik ağı: binding gerçekten yoksa yine inline gönder.
+      if (!queued) await deliverInline(admin, delivery.id);
+    }
   } else {
     await notifyPendingDelivery(admin, {
       recipientStoreId: p.recipientStoreId,
@@ -68,4 +79,85 @@ export async function dispatchDelivery(admin: SupabaseClient, p: DispatchParams)
   }
 
   return delivery.id;
+}
+
+/**
+ * Test/dev'de gönderimi worker yerine doğrudan (inline) yapsın mı?
+ * - DELIVERY_INLINE=1  → her ortamda zorla inline
+ * - NODE_ENV !== "production"  → `next dev`/test otomatik inline
+ * Production (Cloudflare) → false: queue + worker devrede kalır.
+ */
+function shouldDeliverInline(): boolean {
+  return process.env.DELIVERY_INLINE === "1" || process.env.NODE_ENV !== "production";
+}
+
+/**
+ * Tek bir 'approved' delivery'yi worker olmadan (lokal/dev) doğrudan gönderir.
+ * Worker'daki processDelivery ile aynı mantık: atomik claim → decrypt → gönder → durum.
+ * Cloudflare Queue mevcutsa bu yol HİÇ çalışmaz (enqueue başarılı olur).
+ */
+export async function deliverInline(admin: SupabaseClient, deliveryId: string): Promise<void> {
+  const key = process.env.WEBHOOK_ENC_KEY;
+  if (!key) return;
+
+  // ATOMIK CLAIM: yalnız 'approved' → 'sending' (çift gönderim koruması)
+  const { data: delivery } = await admin
+    .from("deliveries")
+    .update({ status: "sending" })
+    .eq("id", deliveryId)
+    .eq("status", "approved")
+    .select("id, attempts, payload_json, webhook_id, thread_id")
+    .maybeSingle();
+  if (!delivery) return;
+
+  const { data: webhook } = await admin
+    .from("webhooks")
+    .select("id, url_encrypted, store_id, thread_id")
+    .eq("id", delivery.webhook_id)
+    .single();
+  if (!webhook) {
+    await admin
+      .from("deliveries")
+      .update({ status: "failed", error: "webhook_not_found" })
+      .eq("id", deliveryId);
+    return;
+  }
+
+  let url: string;
+  try {
+    url = await decryptSecret(webhook.url_encrypted, key, webhook.store_id);
+  } catch {
+    await admin
+      .from("deliveries")
+      .update({ status: "failed", error: "decrypt_failed" })
+      .eq("id", deliveryId);
+    return;
+  }
+
+  const threadId = delivery.thread_id ?? webhook.thread_id ?? undefined;
+  const result = await sendWebhookMessage(
+    url,
+    delivery.payload_json as Record<string, unknown>,
+    threadId,
+  );
+  const attempts = (delivery.attempts ?? 0) + 1;
+
+  if (result.ok) {
+    await admin
+      .from("deliveries")
+      .update({
+        status: "sent",
+        sent_at: new Date().toISOString(),
+        discord_message_id: result.messageId,
+        attempts,
+        error: null,
+      })
+      .eq("id", deliveryId);
+  } else {
+    // Dev'de retry döngüsü yok: kalıcı hata → failed, geçici → tekrar 'approved'.
+    await admin
+      .from("deliveries")
+      .update({ status: result.retryable ? "approved" : "failed", attempts, error: result.error })
+      .eq("id", deliveryId);
+  }
 }

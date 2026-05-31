@@ -11,6 +11,14 @@ function EmbedView({ embed }: { embed: Embed }) {
       className="mt-1 max-w-md rounded border-l-4 bg-[#2b2d31] p-3 text-sm"
       style={{ borderColor: intToHex(embed.color) }}
     >
+      {embed.thumbnail?.url && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={embed.thumbnail.url}
+          alt=""
+          className="float-right ml-3 max-h-20 max-w-20 rounded object-cover"
+        />
+      )}
       {embed.author?.name && (
         <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-zinc-200">
           {embed.author.icon_url && (
@@ -38,10 +46,10 @@ function EmbedView({ embed }: { embed: Embed }) {
       )}
       {embed.image?.url && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={embed.image.url} alt="" className="mt-2 max-h-60 rounded" />
+        <img src={embed.image.url} alt="" className="mt-2 max-h-60 clear-both rounded" />
       )}
       {embed.footer?.text && (
-        <div className="mt-2 text-xs text-zinc-500">{embed.footer.text}</div>
+        <div className="mt-2 clear-both text-xs text-zinc-500">{embed.footer.text}</div>
       )}
     </div>
   );

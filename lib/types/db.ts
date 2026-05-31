@@ -6,7 +6,7 @@ export type NotifyMode = "channel" | "none";
 export type TemplateType = "partnership_intro" | "product" | "custom";
 export type InviteStatus = "pending" | "accepted" | "revoked" | "expired";
 export type PartnerStatus = "accepted" | "revoked";
-export type AnnounceTarget = "all" | "selected";
+export type AnnounceTarget = "all" | "selected" | "own";
 export type DeliverySource = "intro" | "announcement";
 export type DeliveryStatus = "pending" | "approved" | "sent" | "failed" | "rejected";
 

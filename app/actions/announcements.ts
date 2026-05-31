@@ -12,9 +12,16 @@ import type { AnnounceTarget, Partnership } from "@/lib/types/db";
 export async function createAndBroadcast(formData: FormData): Promise<void> {
   const { store } = await requireActiveStore();
   const title = String(formData.get("title") ?? "").trim() || "Announcement";
-  const target: AnnounceTarget = String(formData.get("target")) === "selected" ? "selected" : "all";
+  const rawTarget = String(formData.get("target"));
+  const target: AnnounceTarget =
+    rawTarget === "selected" ? "selected" : rawTarget === "own" ? "own" : "all";
   const selectedIds = formData.getAll("partnership_ids").map(String);
   const ownWebhookIds = formData.getAll("own_webhook_ids").map(String);
+
+  // "own" hedefinde partnerlere gönderim yok; o yüzden en az bir kendi kanalı şart.
+  if (target === "own" && ownWebhookIds.length === 0) {
+    throw new Error("Select at least one of your own channels.");
+  }
 
   let payload;
   try {
@@ -39,7 +46,8 @@ export async function createAndBroadcast(formData: FormData): Promise<void> {
     .eq("status", "accepted");
 
   let list = (partnerships ?? []) as Partnership[];
-  if (target === "selected") list = list.filter((p) => selectedIds.includes(p.id));
+  if (target === "own") list = [];
+  else if (target === "selected") list = list.filter((p) => selectedIds.includes(p.id));
 
   const admin = createAdminClient();
   for (const p of list) {

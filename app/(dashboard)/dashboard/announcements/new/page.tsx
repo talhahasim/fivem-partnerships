@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStore } from "@/lib/stores";
 import { createAndBroadcast } from "@/app/actions/announcements";
-import { EmbedEditor, type EditorProfile } from "@/components/embed-editor/editor";
+import { EmbedEditor, type EditorProfile, type EditorTemplate } from "@/components/embed-editor/editor";
 import { Button, Card, Input, Label, PageHeader } from "@/components/ui";
 import { Select } from "@/components/select";
 import { MultiSelect } from "@/components/multi-select";
@@ -11,21 +11,28 @@ export default async function NewAnnouncementPage() {
   const { store } = await requireActiveStore();
   const supabase = await createClient();
 
-  const [{ data }, { data: profilesData }, { data: webhooksData }] = await Promise.all([
-    supabase
-      .from("partnerships")
-      .select("*")
-      .or(`inviter_store_id.eq.${store.id},invitee_store_id.eq.${store.id}`)
-      .eq("status", "accepted"),
-    supabase
-      .from("sender_profiles")
-      .select("id,name,username,avatar_url,is_default")
-      .eq("store_id", store.id),
-    supabase.from("webhooks").select("id,label").eq("store_id", store.id),
-  ]);
+  const [{ data }, { data: profilesData }, { data: webhooksData }, { data: templatesData }] =
+    await Promise.all([
+      supabase
+        .from("partnerships")
+        .select("*")
+        .or(`inviter_store_id.eq.${store.id},invitee_store_id.eq.${store.id}`)
+        .eq("status", "accepted"),
+      supabase
+        .from("sender_profiles")
+        .select("id,name,username,avatar_url,is_default")
+        .eq("store_id", store.id),
+      supabase.from("webhooks").select("id,label").eq("store_id", store.id),
+      supabase
+        .from("templates")
+        .select("id,name,payload_json")
+        .eq("store_id", store.id)
+        .order("created_at", { ascending: false }),
+    ]);
   const partnerships = (data ?? []) as Partnership[];
   const profiles = (profilesData ?? []) as EditorProfile[];
   const ownWebhooks = (webhooksData ?? []) as { id: string; label: string }[];
+  const templates = (templatesData ?? []) as EditorTemplate[];
 
   const partnerIds = partnerships.map((p) =>
     p.inviter_store_id === store.id ? p.invitee_store_id : p.inviter_store_id,
@@ -58,6 +65,7 @@ export default async function NewAnnouncementPage() {
               options={[
                 { value: "all", label: `All partners (${partnerships.length})` },
                 { value: "selected", label: "Selected partners" },
+                { value: "own", label: "Only my own channels (no partners)" },
               ]}
             />
           </div>
@@ -94,7 +102,7 @@ export default async function NewAnnouncementPage() {
         </Card>
 
         <Card>
-          <EmbedEditor name="payload" profiles={profiles} />
+          <EmbedEditor name="payload" profiles={profiles} templates={templates} />
         </Card>
 
         <Button type="submit">Send</Button>

@@ -8,6 +8,7 @@ import { messageSchema } from "@/lib/embed/schema";
 import { DiscordPreview } from "@/components/embed-editor/preview";
 import { Button, Card, Input, Label } from "@/components/ui";
 import { Select } from "@/components/select";
+import { GuestAcceptForm } from "@/components/invite/guest-accept-form";
 
 export default async function InvitePage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
@@ -51,73 +52,108 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
     if (parsed.success) introPayload = parsed.data;
   }
 
+  // Webhook sender = inviter'ın VARSAYILAN gönderen profili (varsa). Yoksa generic kalır.
+  const { data: defaultProfile } = await admin
+    .from("sender_profiles")
+    .select("username,avatar_url")
+    .eq("store_id", invite.inviter_store_id)
+    .eq("is_default", true)
+    .maybeSingle();
+  if (defaultProfile) {
+    introPayload = {
+      ...introPayload,
+      username: introPayload.username ?? defaultProfile.username ?? undefined,
+      avatar_url: introPayload.avatar_url ?? defaultProfile.avatar_url ?? undefined,
+    };
+  }
+
   // Davetli oturumu
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
+  const { store } = user ? await getActiveStore() : { store: null };
 
-  return (
-    <Centered>
-      <Card className="w-full max-w-2xl">
-        <div className="flex items-center gap-3">
-          {inviterStore?.logo_url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={inviterStore.logo_url} alt="" className="h-12 w-12 rounded-lg" />
-          ) : (
-            <div className="h-12 w-12 rounded-lg bg-indigo-600" />
-          )}
-          <div>
-            <h1 className="text-xl font-semibold text-zinc-100">
-              {inviterStore?.name ?? "A store"} is inviting you to partner up
-            </h1>
-            <p className="text-sm text-zinc-400">
-              If you accept, your messages will be posted to each other&apos;s channels.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-5">
-          <Label>The partnership message you&apos;ll receive</Label>
-          <div className="mt-2">
-            <DiscordPreview message={introPayload} />
-          </div>
-        </div>
-
-        <div className="mt-6">
-          {!user ? (
-            <Link
-              href={`/login?next=/invite/${token}`}
-              className="inline-flex rounded-lg bg-primary px-6 py-3 font-medium text-white transition-colors hover:bg-primary-hover"
-            >
-              Sign in with Discord to accept
-            </Link>
-          ) : (
-            <AcceptSection token={token} />
-          )}
-        </div>
-      </Card>
-    </Centered>
+  const header = (
+    <div className="flex items-center gap-3">
+      {inviterStore?.logo_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={inviterStore.logo_url}
+          alt=""
+          className="h-12 w-12 shrink-0 rounded-lg bg-card object-contain"
+        />
+      ) : (
+        <div className="h-12 w-12 shrink-0 rounded-lg bg-indigo-600" />
+      )}
+      <div>
+        <h1 className="text-xl font-semibold text-zinc-100">
+          {inviterStore?.name ?? "A store"} is inviting you to partner up
+        </h1>
+        <p className="text-sm text-zinc-400">
+          If you accept, your messages will be posted to each other's channels.
+        </p>
+      </div>
+    </div>
   );
-}
 
-async function AcceptSection({ token }: { token: string }) {
-  const { store } = await getActiveStore();
-  if (!store) {
+  const preview = (
+    <div className="mt-5">
+      <Label>The partnership message you'll receive</Label>
+      <div className="mt-2">
+        <DiscordPreview message={introPayload} />
+      </div>
+    </div>
+  );
+
+  // Kayıtlı kullanıcı + mağaza → mevcut dropdown akışı. Aksi halde → misafir (text) akışı.
+  if (store) {
     return (
-      <p className="text-sm text-warning">
-        Create a store first to accept the invite.{" "}
-        <Link href="/onboarding" className="underline">
-          Create store
-        </Link>
-      </p>
+      <Centered>
+        <Card className="w-full max-w-2xl">
+          {header}
+          {preview}
+          <div className="mt-6">
+            <RegisteredAcceptSection token={token} storeId={store.id} storeName={store.name} />
+          </div>
+        </Card>
+      </Centered>
     );
   }
 
+  return (
+    <main className="flex flex-1 items-start justify-center p-6">
+      <div className="flex w-full max-w-5xl flex-col gap-5 lg:flex-row lg:items-start">
+        <Card className="w-full lg:max-w-2xl lg:flex-1">
+          {header}
+          {preview}
+          <div className="mt-6">
+            <GuestAcceptForm token={token} />
+          </div>
+        </Card>
+        <SignupPromo token={token} />
+      </div>
+    </main>
+  );
+}
+
+async function RegisteredAcceptSection({
+  token,
+  storeId,
+  storeName,
+}: {
+  token: string;
+  storeId: string;
+  storeName: string;
+}) {
   const supabase = await createClient();
   const [webhooksRes, templatesRes] = await Promise.all([
-    supabase.from("webhooks").select("id,label").eq("store_id", store.id),
-    supabase.from("templates").select("id,name").eq("store_id", store.id).in("type", ["partnership_intro", "custom"]),
+    supabase.from("webhooks").select("id,label").eq("store_id", storeId),
+    supabase
+      .from("templates")
+      .select("id,name")
+      .eq("store_id", storeId)
+      .in("type", ["partnership_intro", "custom"]),
   ]);
   const webhooks = webhooksRes.data ?? [];
   const templates = templatesRes.data ?? [];
@@ -137,7 +173,7 @@ async function AcceptSection({ token }: { token: string }) {
     <form action={acceptInvite} className="space-y-4">
       <input type="hidden" name="token" value={token} />
       <p className="text-sm text-zinc-400">
-        Accepting as <strong className="text-zinc-200">{store.name}</strong>.
+        Accepting as <strong className="text-zinc-200">{storeName}</strong>.
       </p>
       <div>
         <Label htmlFor="webhook_id">Your channel (webhook) that receives their message *</Label>
@@ -174,6 +210,36 @@ async function AcceptSection({ token }: { token: string }) {
       </div>
       <Button type="submit">Accept partnership</Button>
     </form>
+  );
+}
+
+/** Kayıt olmaya teşvik eden statik yan panel. */
+function SignupPromo({ token }: { token: string }) {
+  return (
+    <aside className="w-full lg:w-72 lg:shrink-0">
+      <Card className="border-primary/30 bg-primary/5 lg:sticky lg:top-6">
+        <div className="text-xs font-semibold uppercase tracking-wide text-primary-2">
+          Have your own store?
+        </div>
+        <h2 className="mt-1 text-base font-semibold text-zinc-100">Create a free account</h2>
+        <p className="mt-2 text-sm text-zinc-400">
+          You can accept this without signing up. But with a free account you also get:
+        </p>
+        <ul className="mt-3 space-y-1.5 text-sm text-zinc-300">
+          <li>• Reusable webhooks &amp; sender profiles</li>
+          <li>• Saved message templates &amp; embeds</li>
+          <li>• Approve incoming partner posts</li>
+          <li>• Broadcast announcements to all partners</li>
+        </ul>
+        <Link
+          href={`/login?next=/invite/${token}`}
+          className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-hover"
+        >
+          Sign in with Discord
+        </Link>
+        <p className="mt-2 text-center text-xs text-faint">Free • takes 30 seconds</p>
+      </Card>
+    </aside>
   );
 }
 

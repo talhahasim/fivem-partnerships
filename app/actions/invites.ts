@@ -7,7 +7,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/auth";
 import { requireActiveStore } from "@/lib/stores";
 import { dispatchDelivery } from "@/lib/deliveries";
-import { parseThreadId } from "@/lib/discord";
+import { parseThreadId, isValidWebhookUrl, validateWebhook } from "@/lib/discord";
+import { encryptSecret } from "@/lib/crypto";
 import { defaultIntroMessage } from "@/lib/embed/defaults";
 import { messageSchema, type DiscordMessage } from "@/lib/embed/schema";
 import type { Store } from "@/lib/types/db";
@@ -164,6 +165,140 @@ export async function acceptInvite(formData: FormData): Promise<void> {
 
   revalidatePath("/dashboard/partnerships");
   redirect("/dashboard/partnerships");
+}
+
+/**
+ * Daveti MİSAFİR olarak kabul eder (kayıt/login gerekmez).
+ * Davetli kendi webhook URL'ini doğrudan girer; sisteme kayıtlı olması gerekmez.
+ * Arka planda hafif bir "guest store" + webhook satırı açılır, böylece mevcut
+ * delivery/worker zinciri (FK + AES-GCM AAD=store_id) hiç değişmeden çalışır.
+ */
+export async function acceptInviteGuest(formData: FormData): Promise<void> {
+  const token = String(formData.get("token") ?? "");
+  const storeName = String(formData.get("store_name") ?? "").trim();
+  const webhookUrl = String(formData.get("webhook_url") ?? "").trim();
+  const threadId = parseThreadId(String(formData.get("thread_id") ?? ""));
+  const messageText = String(formData.get("message") ?? "").trim();
+
+  if (!token) throw new Error("Missing invite");
+  if (!storeName) throw new Error("Enter your store / server name.");
+  if (!isValidWebhookUrl(webhookUrl)) throw new Error("Invalid Discord webhook URL.");
+
+  const key = process.env.WEBHOOK_ENC_KEY;
+  if (!key) throw new Error("Server configuration missing (WEBHOOK_ENC_KEY).");
+
+  const admin = createAdminClient();
+
+  // Davet doğrula
+  const { data: invite } = await admin.from("invites").select("*").eq("token", token).maybeSingle();
+  if (!invite || invite.status !== "pending") throw new Error("Invite is invalid or already used");
+  if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
+    await admin.from("invites").update({ status: "expired" }).eq("id", invite.id);
+    throw new Error("Invite has expired");
+  }
+
+  // Webhook gerçekten var mı? (kaydetmeden önce doğrula)
+  const meta = await validateWebhook(webhookUrl);
+  if (!meta) throw new Error("Could not verify the webhook (deleted or unreachable).");
+
+  const { data: inviterStore } = await admin
+    .from("stores")
+    .select("id,name")
+    .eq("id", invite.inviter_store_id)
+    .single<Pick<Store, "id" | "name">>();
+
+  // Hafif guest store (owner_id null, is_guest)
+  const slug = `guest-${crypto.randomUUID().slice(0, 12)}`;
+  const { data: guestStore, error: gErr } = await admin
+    .from("stores")
+    .insert({ name: storeName, slug, is_guest: true })
+    .select("id,name")
+    .single<Pick<Store, "id" | "name">>();
+  if (gErr || !guestStore) throw new Error(gErr?.message ?? "Could not create the partnership");
+
+  // Guest'in onaylayacak paneli yok; kabul anında zaten rıza verdi → gelen
+  // partner gönderimleri otomatik onaylansın (yoksa 'manual' default → sonsuz pending).
+  await admin.from("store_settings").insert({ store_id: guestStore.id, approval_mode: "auto" });
+
+  // Guest webhook (AAD = guest store id → worker bununla decrypt eder)
+  const url_encrypted = await encryptSecret(webhookUrl, key, guestStore.id);
+  const { data: guestWebhook, error: wErr } = await admin
+    .from("webhooks")
+    .insert({
+      store_id: guestStore.id,
+      label: "Partner channel",
+      url_encrypted,
+      thread_id: threadId,
+      guild_name: meta.guild_id,
+      channel_name: meta.name ?? meta.channel_id,
+      is_valid: true,
+      last_checked_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  if (wErr || !guestWebhook) throw new Error(wErr?.message ?? "Could not save the webhook");
+
+  const inviterIntro = await loadTemplatePayload(
+    admin,
+    invite.inviter_intro_template_id,
+    invite.inviter_store_id,
+    inviterStore?.name ?? "Partner",
+  );
+  const inviteeIntro: DiscordMessage = messageText
+    ? { content: messageText }
+    : defaultIntroMessage(guestStore.name);
+
+  const { data: partnership, error: pErr } = await admin
+    .from("partnerships")
+    .insert({
+      inviter_store_id: invite.inviter_store_id,
+      invitee_store_id: guestStore.id,
+      status: "accepted",
+      inviter_webhook_id: invite.inviter_webhook_id,
+      invitee_webhook_id: guestWebhook.id,
+      inviter_thread_id: invite.inviter_thread_id,
+      invitee_thread_id: threadId,
+      inviter_intro_payload: inviterIntro,
+      invitee_intro_payload: inviteeIntro,
+    })
+    .select("id")
+    .single();
+  if (pErr || !partnership) throw new Error(pErr?.message ?? "Could not create the partnership");
+
+  await admin
+    .from("invites")
+    .update({ status: "accepted", used_at: new Date().toISOString() })
+    .eq("id", invite.id);
+
+  // Guest'in mesajı → inviter kanalına (inviter'ın onay moduna saygı gösterir)
+  if (invite.inviter_webhook_id) {
+    await dispatchDelivery(admin, {
+      senderStoreId: guestStore.id,
+      senderName: guestStore.name,
+      recipientStoreId: invite.inviter_store_id,
+      partnershipId: partnership.id,
+      webhookId: invite.inviter_webhook_id,
+      threadId: invite.inviter_thread_id,
+      sourceType: "intro",
+      sourceId: partnership.id,
+      payload: inviteeIntro,
+    });
+  }
+  // Inviter'ın mesajı → guest kanalına. Guest'in paneli/onaycısı yok → forceApproved.
+  await dispatchDelivery(admin, {
+    senderStoreId: invite.inviter_store_id,
+    senderName: inviterStore?.name ?? "Partner",
+    recipientStoreId: guestStore.id,
+    partnershipId: partnership.id,
+    webhookId: guestWebhook.id,
+    threadId,
+    sourceType: "intro",
+    sourceId: partnership.id,
+    payload: inviterIntro,
+    forceApproved: true,
+  });
+
+  redirect("/invite/accepted");
 }
 
 async function loadTemplatePayload(

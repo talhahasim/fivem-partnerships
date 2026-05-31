@@ -29,13 +29,17 @@ export async function saveTemplate(formData: FormData): Promise<void> {
 
   const supabase = await createClient();
   if (id) {
-    await supabase
+    const { error } = await supabase
       .from("templates")
       .update({ name, type, payload_json: payload })
       .eq("id", id)
       .eq("store_id", store.id);
+    if (error) throw new Error(`Could not update template: ${error.message}`);
   } else {
-    await supabase.from("templates").insert({ store_id: store.id, name, type, payload_json: payload });
+    const { error } = await supabase
+      .from("templates")
+      .insert({ store_id: store.id, name, type, payload_json: payload });
+    if (error) throw new Error(`Could not create template: ${error.message}`);
   }
 
   revalidatePath("/dashboard/templates");

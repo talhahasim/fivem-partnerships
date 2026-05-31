@@ -4,10 +4,20 @@ import type { Store } from "@/lib/types/db";
 
 export const ACTIVE_STORE_COOKIE = "active_store";
 
-/** Kullanıcının sahip olduğu tüm mağazalar (en yeni önce). */
+/** Kullanıcının SAHİP OLDUĞU tüm mağazalar (en yeni önce). */
 export async function getStores(): Promise<Store[]> {
   const supabase = await createClient();
-  const { data } = await supabase.from("stores").select("*").order("created_at", { ascending: false });
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return [];
+  // owner_id filtresi şart: stores_partner_select policy'si partner mağazaları da
+  // görünür yapar; onlar "benim mağazalarım"/aktif mağaza olarak sayılmamalı.
+  const { data } = await supabase
+    .from("stores")
+    .select("*")
+    .eq("owner_id", user.id)
+    .order("created_at", { ascending: false });
   return (data ?? []) as Store[];
 }
 
